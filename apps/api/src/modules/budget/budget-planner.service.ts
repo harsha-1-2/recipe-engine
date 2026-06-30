@@ -236,17 +236,17 @@ export class BudgetPlannerService {
           if (catalog.length > 0) {
             if (priceTier === 'HIGH_RATED') {
               const C = 4.0, m = 20;
-              chosen = catalog.sort((a, b) => {
+              chosen = catalog.sort((a: any, b: any) => {
                 const sa = (a.numRatings * a.rating + m * C) / (a.numRatings + m);
                 const sb = (b.numRatings * b.rating + m * C) / (b.numRatings + m);
                 return sb - sa;
               })[0];
             } else if (priceTier === 'PREFERENCE' && preferredBrands.length > 0) {
-              const brandMatch = catalog.find(c => preferredBrands.includes(c.brandName.toLowerCase()));
+              const brandMatch = catalog.find((c: any) => preferredBrands.includes(c.brandName.toLowerCase()));
               if (brandMatch) chosen = brandMatch;
             } else if (priceTier === 'MIXED') {
-              const maxPrice = Math.max(...catalog.map(c => c.priceInr));
-              chosen = catalog.sort((a, b) => {
+              const maxPrice = Math.max(...catalog.map((c: any) => c.priceInr));
+              chosen = catalog.sort((a: any, b: any) => {
                 const sa = 0.5 * (1 - a.priceInr / maxPrice) + 0.5 * (a.rating / 5);
                 const sb = 0.5 * (1 - b.priceInr / maxPrice) + 0.5 * (b.rating / 5);
                 return sb - sa;
