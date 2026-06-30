@@ -1,0 +1,259 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum DietType {
+  VEG
+  EGG
+  NON_VEG
+}
+
+enum PriceTier {
+  CHEAPEST
+  HIGH_RATED
+  MIXED
+  PREFERENCE
+}
+
+enum AddedVia {
+  MANUAL
+  BOT
+  BUDGET_ENGINE
+  WEEKLY_ENGINE
+}
+
+enum PreferenceType {
+  ALLERGIC
+  DISLIKED
+  PREFERRED
+}
+
+enum RecipeSource {
+  CATALOG
+  BOT_GENERATED
+}
+
+enum CatalogProviderType {
+  SIMULATED
+  INSTAMART
+}
+
+model RegionGroup {
+  id      String          @id @default(uuid())
+  name    String          @unique
+  regions CuisineRegion[]
+}
+
+model CuisineRegion {
+  id            String        @id @default(uuid())
+  name          String        @unique
+  regionGroup   RegionGroup   @relation(fields: [regionGroupId], references: [id])
+  regionGroupId String
+  recipes       Recipe[]
+}
+
+model DishType {
+  id      String   @id @default(uuid())
+  name    String   @unique
+  recipes Recipe[]
+}
+
+model Recipe {
+  id              String             @id @default(uuid())
+  sourceSrno      Int?               @unique
+  name            String
+  description     String?
+  dietType        DietType
+  legacyDietLabel String?
+  cuisineRegion   CuisineRegion      @relation(fields: [cuisineRegionId], references: [id])
+  cuisineRegionId String
+  dishType        DishType           @relation(fields: [dishTypeId], references: [id])
+  dishTypeId      String
+  servesDefault   Int                @default(2)
+  prepTimeMinutes Int?
+  cookTimeMinutes Int?
+  imageUrl        String?
+  sourceUrl       String?
+  instructions    String?
+  source          RecipeSource       @default(CATALOG)
+  createdAt       DateTime           @default(now())
+  ingredients     RecipeIngredient[]
+  weeklyOptions   WeeklyPlanOption[]
+}
+
+model Ingredient {
+  id                String   @id @default(uuid())
+  legacyCanonicalId String?  @unique
+  canonicalName     String   @unique
+  category          String
+  dietType          DietType
+  defaultUnit       String
+  aliases           IngredientAlias[]
+  recipeLinks       RecipeIngredient[]
+  catalogItems      CatalogItem[]
+  userPrefs         UserIngredientPreference[]
+}
+
+model IngredientAlias {
+  id           String     @id @default(uuid())
+  ingredient   Ingredient @relation(fields: [ingredientId], references: [id])
+  ingredientId String
+  aliasText    String
+  @@unique([ingredientId, aliasText])
+}
+
+model RecipeIngredient {
+  id           String     @id @default(uuid())
+  recipe       Recipe     @relation(fields: [recipeId], references: [id])
+  recipeId     String
+  ingredient   Ingredient @relation(fields: [ingredientId], references: [id])
+  ingredientId String
+  quantity     Float?
+  unit         String?
+  isOptional   Boolean    @default(false)
+  notes        String?
+}
+
+model CatalogItem {
+  id              String              @id @default(uuid())
+  sourceProductId String?             @unique
+  ingredient      Ingredient          @relation(fields: [ingredientId], references: [id])
+  ingredientId    String
+  brandName       String
+  packSize        Float
+  packUnit        String
+  priceInr        Float
+  rating          Float
+  numRatings      Int
+  isOrganic       Boolean             @default(false)
+  isAvailable     Boolean             @default(true)
+  provider        CatalogProviderType @default(SIMULATED)
+  providerSkuId   String?
+  updatedAt       DateTime            @updatedAt
+}
+
+model User {
+  id               String     @id @default(uuid())
+  name             String?
+  email            String     @unique
+  passwordHash     String
+  dietTypePref     DietType?
+  defaultPriceTier PriceTier  @default(MIXED)
+  budget           Float      @default(2500)
+  familySize       Int        @default(2)
+  cuisinePref      String?
+  createdAt        DateTime   @default(now())
+  ingredientPrefs  UserIngredientPreference[]
+  brandPrefs       UserBrandPreference[]
+  carts            Cart[]
+  budgetPlans      BudgetPlan[]
+  weeklyPlans      WeeklyPlan[]
+  botSessions      BotSession[]
+  manualListItems  ManualListItem[]
+}
+
+model UserIngredientPreference {
+  id           String         @id @default(uuid())
+  user         User           @relation(fields: [userId], references: [id])
+  userId       String
+  ingredient   Ingredient     @relation(fields: [ingredientId], references: [id])
+  ingredientId String
+  type         PreferenceType
+  @@unique([userId, ingredientId])
+}
+
+model UserBrandPreference {
+  id        String   @id @default(uuid())
+  user      User     @relation(fields: [userId], references: [id])
+  userId    String
+  brandName String
+  createdAt DateTime @default(now())
+  @@unique([userId, brandName])
+}
+
+model ManualListItem {
+  id        String   @id @default(uuid())
+  user      User     @relation(fields: [userId], references: [id])
+  userId    String
+  name      String
+  qty       Float    @default(1)
+  unit      String   @default("pcs")
+  checked   Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+model Cart {
+  id        String     @id @default(uuid())
+  user      User       @relation(fields: [userId], references: [id])
+  userId    String
+  status    String     @default("active")
+  createdAt DateTime   @default(now())
+  items     CartItem[]
+}
+
+model CartItem {
+  id            String     @id @default(uuid())
+  cart          Cart       @relation(fields: [cartId], references: [id])
+  cartId        String
+  recipeId      String?
+  ingredientId  String
+  catalogItemId String?
+  quantity      Float
+  priceTierUsed PriceTier?
+  addedVia      AddedVia   @default(MANUAL)
+}
+
+model BotSession {
+  id        String       @id @default(uuid())
+  user      User         @relation(fields: [userId], references: [id])
+  userId    String
+  createdAt DateTime     @default(now())
+  messages  BotMessage[]
+}
+
+model BotMessage {
+  id        String     @id @default(uuid())
+  session   BotSession @relation(fields: [sessionId], references: [id])
+  sessionId String
+  role      String
+  content   String
+  createdAt DateTime     @default(now())
+}
+
+model BudgetPlan {
+  id            String   @id @default(uuid())
+  user          User     @relation(fields: [userId], references: [id])
+  userId        String
+  budgetInr     Float
+  dietPref      DietType
+  days          Int
+  mealsPerDay   Int
+  generatedPlan String
+  createdAt     DateTime @default(now())
+}
+
+model WeeklyPlan {
+  id            String             @id @default(uuid())
+  user          User               @relation(fields: [userId], references: [id])
+  userId        String
+  weekStartDate DateTime
+  preferences   String
+  createdAt     DateTime           @default(now())
+  options       WeeklyPlanOption[]
+}
+
+model WeeklyPlanOption {
+  id           String     @id @default(uuid())
+  weeklyPlan   WeeklyPlan @relation(fields: [weeklyPlanId], references: [id])
+  weeklyPlanId String
+  dayIndex     Int
+  mealSlot     String
+  recipe       Recipe     @relation(fields: [recipeId], references: [id])
+  recipeId     String
+  isSelected   Boolean    @default(false)
+}

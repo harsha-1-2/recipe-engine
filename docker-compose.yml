@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: recipe_mvp
+    ports:
+      - "5433:5432"
+    volumes:
+      - recipe_postgres_data:/var/lib/postgresql/data
+
+volumes:
+  recipe_postgres_data:
+
+# ──────────────────────────────────────────────────
+# After `docker-compose up -d`, set your .env:
+#   DATABASE_URL="postgresql://postgres:postgres@localhost:5433/recipe_mvp"
+#   JWT_SECRET=any-random-string
+#   GROQ_API_KEY=your-key   (optional, for AI bot)
+# Then: cd apps/api && npm install && npm run seed
+# ──────────────────────────────────────────────────
