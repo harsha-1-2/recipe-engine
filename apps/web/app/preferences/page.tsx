@@ -143,9 +143,14 @@ export default function PreferencesPage() {
                 const active = ingredientPrefs.some(p => p.type === 'DISLIKED' && p.ingredient?.canonicalName === ing.toLowerCase());
                 return (
                   <button key={ing}
-                    onClick={() => active
-                      ? removeIngredientPref(ingredientPrefs.find(p => p.ingredient?.canonicalName === ing.toLowerCase())?.ingredientId)
-                      : addIngredientPref(ing, 'DISLIKED')}
+                    onClick={() => {
+                      if (active) {
+                        const pref = ingredientPrefs.find(p => p.ingredient?.canonicalName === ing.toLowerCase());
+                        if (pref?.ingredient?.id) removeIngredientPref(pref.ingredient.id);
+                      } else {
+                        addIngredientPref(ing, 'DISLIKED');
+                      }
+                    }}
                     style={{ padding: '0.3rem 0.75rem', borderRadius: '20px', border: '1.5px solid', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600, background: active ? '#fbbf24' : 'white', color: active ? '#78350f' : 'var(--color-text-muted)', borderColor: active ? '#fbbf24' : 'var(--color-border)' }}>
                     {ing}
                   </button>
@@ -157,7 +162,7 @@ export default function PreferencesPage() {
                 {dislikedPrefs.map(p => (
                   <span key={p.id} style={{ background: '#fef3c7', color: '#78350f', padding: '0.25rem 0.6rem', borderRadius: '20px', fontSize: '0.8rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                     👎 {p.ingredient?.canonicalName}
-                    <span onClick={() => removeIngredientPref(p.ingredientId)} style={{ cursor: 'pointer', opacity: 0.7 }}>×</span>
+                    <span onClick={() => { if (p.ingredient?.id) removeIngredientPref(p.ingredient.id); }} style={{ cursor: 'pointer', opacity: 0.7 }}>×</span>
                   </span>
                 ))}
               </div>
@@ -212,7 +217,7 @@ export default function PreferencesPage() {
                 {preferredPrefs.map(p => (
                   <span key={p.id} style={{ background: '#d1fae5', color: '#065f46', padding: '0.25rem 0.6rem', borderRadius: '20px', fontSize: '0.8rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                     ⭐ {p.ingredient?.canonicalName}
-                    <span onClick={() => removeIngredientPref(p.ingredientId)} style={{ cursor: 'pointer', opacity: 0.7 }}>×</span>
+                    <span onClick={() => { if (p.ingredient?.id) removeIngredientPref(p.ingredient.id); }} style={{ cursor: 'pointer', opacity: 0.7 }}>×</span>
                   </span>
                 ))}
               </div>
