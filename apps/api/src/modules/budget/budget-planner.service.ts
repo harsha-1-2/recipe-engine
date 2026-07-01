@@ -151,26 +151,47 @@ export class BudgetPlannerService {
       return { recipe, estimatedCost: Math.max(cost, 30), prefScore };
     });
 
+    const isBreakfastItem = (recipe: any) => {
+      const name = recipe.name.toLowerCase();
+      const dt = recipe.dishType.name.toLowerCase();
+      if (dt.includes('breakfast')) return true;
+      if (name.includes('dosa') || name.includes('idli') || name.includes('poha') || 
+          name.includes('upma') || name.includes('paratha') || name.includes('toast') || 
+          name.includes('omelette') || name.includes('scrambled') || name.includes('sandwich') ||
+          name.includes('uttapam') || name.includes('pongal')) {
+        return true;
+      }
+      return false;
+    };
+
+    const isLunchDinnerItem = (recipe: any) => {
+      const name = recipe.name.toLowerCase();
+      const dt = recipe.dishType.name.toLowerCase();
+      if (dt.includes('main') || dt.includes('rice') || dt.includes('bread') || dt.includes('curry') || dt.includes('gravy')) return true;
+      if (name.includes('biryani') || name.includes('tikka') || name.includes('tandoori') || 
+          name.includes('masala') || name.includes('korma') || name.includes('roti') || 
+          name.includes('nan') || name.includes('dal') || name.includes('tadka') ||
+          name.includes('paneer') || name.includes('chicken') || name.includes('mutton') || name.includes('pulao')) {
+        return true;
+      }
+      return false;
+    };
+
     // Categorize costed recipes by meal slot
     const bySlot: Record<string, typeof costedRecipes> = { Breakfast: [], Lunch: [], Dinner: [], Snack: [], Supper: [] };
     for (const cr of costedRecipes) {
-      const dt = cr.recipe.dishType.name.toLowerCase();
-      if (dt.includes('breakfast')) {
+      if (isBreakfastItem(cr.recipe)) {
         bySlot.Breakfast.push(cr);
         bySlot.Snack.push(cr);
-      } else if (dt.includes('snack')) {
-        bySlot.Snack.push(cr);
-        bySlot.Breakfast.push(cr);
-      } else if (dt.includes('main') || dt.includes('rice') || dt.includes('bread') || dt.includes('curry')) {
+      } else if (isLunchDinnerItem(cr.recipe)) {
         bySlot.Lunch.push(cr);
         bySlot.Dinner.push(cr);
         bySlot.Supper.push(cr);
       } else {
-        bySlot.Breakfast.push(cr);
-        bySlot.Lunch.push(cr);
-        bySlot.Dinner.push(cr);
         bySlot.Snack.push(cr);
         bySlot.Supper.push(cr);
+        bySlot.Lunch.push(cr);
+        bySlot.Dinner.push(cr);
       }
     }
 
@@ -179,99 +200,159 @@ export class BudgetPlannerService {
       return candidates.length > 0 ? candidates : costedRecipes;
     };
 
-    // ── 5. Greedy budget allocation ────────────────────────────────────────
+    // ── 5. Initial Plan Generation with Variety Rotation ───────────────────
     const totalSlots = days * mealsPerDay;
-    let remainingBudget = budgetInr;
     const plan: PlanMeal[] = [];
     const usedIds = new Set<string>();
 
+    const recentCuisines: string[] = [];
+    const recentIngredients = new Set<string>();
+
+    const getRecipeMainIngredients = (recipe: any): string[] => {
+      return recipe.ingredients
+        .map((ri: any) => ri.ingredient.canonicalName.toLowerCase())
+        .slice(0, 3);
+    };
+
     for (let day = 0; day < days; day++) {
       for (let meal = 0; meal < mealsPerDay; meal++) {
-        const slotsLeft = totalSlots - plan.length;
-        const targetPerSlot = remainingBudget / slotsLeft;
         const mealSlotName = mealSlots[meal % mealSlots.length];
-
         const slotPool = getSlotCandidates(mealSlotName);
 
+        // Score candidates with rotation penalties
         const candidates = slotPool
-          .filter(c => !usedIds.has(c.recipe.id) && c.estimatedCost <= targetPerSlot * 1.3)
-          .sort((a, b) => b.prefScore - a.prefScore); // sort by preference score
-
-        if (candidates.length === 0) {
-          // Relax constraint: any recipe within 2x budget
-          const relaxed = slotPool
-            .filter(c => c.estimatedCost <= targetPerSlot * 2)
-            .sort((a, b) => {
-              if (Math.abs(b.prefScore - a.prefScore) > 1) {
-                return b.prefScore - a.prefScore;
-              }
-              return a.estimatedCost - b.estimatedCost;
-            });
-          if (relaxed.length > 0) {
-            const chosen = relaxed[Math.floor(Math.random() * Math.min(5, relaxed.length))];
-            plan.push({ ...chosen, dayIndex: day, mealSlot: mealSlotName });
-            remainingBudget -= chosen.estimatedCost;
-            usedIds.add(chosen.recipe.id);
-          }
-        } else {
-          const chosen = candidates[Math.floor(Math.random() * Math.min(8, candidates.length))];
-          plan.push({ ...chosen, dayIndex: day, mealSlot: mealSlotName });
-          remainingBudget -= chosen.estimatedCost;
-          usedIds.add(chosen.recipe.id);
-        }
-      }
-    }
-
-    // Smart aggregated cost calculation for the final plan (pantry/leftover pack-sharing)
-    const ingredientTotalQty: Record<string, { qty: number; unit: string; catalogItem: any }> = {};
-    for (const meal of plan) {
-      for (const ri of meal.recipe.ingredients) {
-        const ingId = ri.ingredientId;
-        const qty = ri.quantity || 0;
-        const unit = ri.unit || ri.ingredient.defaultUnit || 'units';
-
-        if (!ingredientTotalQty[ingId]) {
-          const catalog = ri.ingredient.catalogItems;
-          let chosen = catalog[0] || null;
-          if (catalog.length > 0) {
-            if (priceTier === 'HIGH_RATED') {
-              const C = 4.0, m = 20;
-              chosen = catalog.sort((a: any, b: any) => {
-                const sa = (a.numRatings * a.rating + m * C) / (a.numRatings + m);
-                const sb = (b.numRatings * b.rating + m * C) / (b.numRatings + m);
-                return sb - sa;
-              })[0];
-            } else if (priceTier === 'PREFERENCE' && preferredBrands.length > 0) {
-              const brandMatch = catalog.find((c: any) => preferredBrands.includes(c.brandName.toLowerCase()));
-              if (brandMatch) chosen = brandMatch;
-            } else if (priceTier === 'MIXED') {
-              const maxPrice = Math.max(...catalog.map((c: any) => c.priceInr));
-              chosen = catalog.sort((a: any, b: any) => {
-                const sa = 0.5 * (1 - a.priceInr / maxPrice) + 0.5 * (a.rating / 5);
-                const sb = 0.5 * (1 - b.priceInr / maxPrice) + 0.5 * (b.rating / 5);
-                return sb - sa;
-              })[0];
+          .filter(c => !usedIds.has(c.recipe.id))
+          .map(c => {
+            let penalty = 0;
+            const cuisineGroup = c.recipe.cuisineRegion?.regionGroup?.name;
+            if (cuisineGroup && recentCuisines.includes(cuisineGroup)) {
+              penalty += 15;
             }
+            const mainIngs = getRecipeMainIngredients(c.recipe);
+            const dupCount = mainIngs.filter(ing => recentIngredients.has(ing)).length;
+            penalty += dupCount * 20;
+
+            return { ...c, adjustedScore: c.prefScore - penalty };
+          })
+          .sort((a, b) => b.adjustedScore - a.adjustedScore);
+
+        if (candidates.length > 0) {
+          const chosen = candidates[Math.floor(Math.random() * Math.min(5, candidates.length))];
+          plan.push({
+            recipe: chosen.recipe,
+            estimatedCost: chosen.estimatedCost,
+            dayIndex: day,
+            mealSlot: mealSlotName
+          });
+          usedIds.add(chosen.recipe.id);
+
+          const chosenCuisine = chosen.recipe.cuisineRegion?.regionGroup?.name;
+          if (chosenCuisine) {
+            recentCuisines.push(chosenCuisine);
+            if (recentCuisines.length > 2) recentCuisines.shift();
           }
-          ingredientTotalQty[ingId] = { qty: 0, unit, catalogItem: chosen };
+          const chosenIngs = getRecipeMainIngredients(chosen.recipe);
+          chosenIngs.forEach(ing => recentIngredients.add(ing));
+          if (recentIngredients.size > 8) {
+            const arr = Array.from(recentIngredients);
+            recentIngredients.clear();
+            arr.slice(arr.length - 6).forEach(ing => recentIngredients.add(ing));
+          }
         }
-        ingredientTotalQty[ingId].qty += qty;
       }
     }
 
-    let aggregatedTotalCost = 0;
-    for (const [ingId, info] of Object.entries(ingredientTotalQty)) {
-      if (!info.catalogItem) {
-        aggregatedTotalCost += info.qty * FALLBACK_PRICE_PER_ING || FALLBACK_PRICE_PER_ING;
-        continue;
+    // ── 6. Two-Pass Budget Refinement Loop ────────────────────────────────
+    const calculateTotalCost = (pList: PlanMeal[]) => {
+      const ingredientTotalQty: Record<string, { qty: number; unit: string; catalogItem: any }> = {};
+      for (const meal of pList) {
+        for (const ri of meal.recipe.ingredients) {
+          const ingId = ri.ingredientId;
+          const qty = ri.quantity || 0;
+          const unit = ri.unit || ri.ingredient.defaultUnit || 'units';
+
+          if (!ingredientTotalQty[ingId]) {
+            const catalog = ri.ingredient.catalogItems;
+            let chosen = catalog[0] || null;
+            if (catalog.length > 0) {
+              if (priceTier === 'HIGH_RATED') {
+                const C = 4.0, m = 20;
+                chosen = catalog.sort((a: any, b: any) => {
+                  const sa = (a.numRatings * a.rating + m * C) / (a.numRatings + m);
+                  const sb = (b.numRatings * b.rating + m * C) / (b.numRatings + m);
+                  return sb - sa;
+                })[0];
+              } else if (priceTier === 'PREFERENCE' && preferredBrands.length > 0) {
+                const brandMatch = catalog.find((c: any) => preferredBrands.includes(c.brandName.toLowerCase()));
+                if (brandMatch) chosen = brandMatch;
+              } else if (priceTier === 'MIXED') {
+                const maxPrice = Math.max(...catalog.map((c: any) => c.priceInr));
+                chosen = catalog.sort((a: any, b: any) => {
+                  const sa = 0.5 * (1 - a.priceInr / maxPrice) + 0.5 * (a.rating / 5);
+                  const sb = 0.5 * (1 - b.priceInr / maxPrice) + 0.5 * (b.rating / 5);
+                  return sb - sa;
+                })[0];
+              }
+            }
+            ingredientTotalQty[ingId] = { qty: 0, unit, catalogItem: chosen };
+          }
+          ingredientTotalQty[ingId].qty += qty;
+        }
       }
-      const packSize = info.catalogItem.packSize || 1;
-      const packsNeeded = Math.ceil(info.qty / packSize) || 1;
-      aggregatedTotalCost += packsNeeded * info.catalogItem.priceInr;
+
+      let aggregatedTotalCost = 0;
+      for (const [ingId, info] of Object.entries(ingredientTotalQty)) {
+        if (!info.catalogItem) {
+          aggregatedTotalCost += info.qty * FALLBACK_PRICE_PER_ING || FALLBACK_PRICE_PER_ING;
+          continue;
+        }
+        const packSize = info.catalogItem.packSize || 1;
+        const packsNeeded = Math.ceil(info.qty / packSize) || 1;
+        aggregatedTotalCost += packsNeeded * info.catalogItem.priceInr;
+      }
+      return Math.max(aggregatedTotalCost, 30);
+    };
+
+    let totalEstCost = calculateTotalCost(plan);
+    let refinementIterations = 0;
+
+    while (totalEstCost > budgetInr && refinementIterations < 15) {
+      refinementIterations++;
+      let maxCostIdx = -1;
+      let maxCost = -1;
+      for (let i = 0; i < plan.length; i++) {
+        if (plan[i].estimatedCost > maxCost) {
+          maxCost = plan[i].estimatedCost;
+          maxCostIdx = i;
+        }
+      }
+
+      if (maxCostIdx === -1) break;
+
+      const targetMeal = plan[maxCostIdx];
+      const slotPool = getSlotCandidates(targetMeal.mealSlot);
+
+      const cheapestAlternatives = slotPool
+        .filter(c => !usedIds.has(c.recipe.id))
+        .sort((a, b) => a.estimatedCost - b.estimatedCost);
+
+      if (cheapestAlternatives.length > 0) {
+        const replacement = cheapestAlternatives[0];
+        usedIds.delete(targetMeal.recipe.id);
+        usedIds.add(replacement.recipe.id);
+
+        plan[maxCostIdx] = {
+          recipe: replacement.recipe,
+          estimatedCost: replacement.estimatedCost,
+          dayIndex: targetMeal.dayIndex,
+          mealSlot: targetMeal.mealSlot
+        };
+        totalEstCost = calculateTotalCost(plan);
+      } else {
+        break;
+      }
     }
 
-    // Fallback: if we had no meals generated or aggregatedTotalCost is 0, keep it 0
-    const totalEstCost = plan.length > 0 ? Math.max(aggregatedTotalCost, 30) : 0;
     const finalSavings = budgetInr - totalEstCost;
 
     const result = {

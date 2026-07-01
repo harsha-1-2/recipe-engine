@@ -102,36 +102,67 @@ export class WeeklyPlannerService {
       return { weeklyPlan: [], message: 'No recipes found. Please check your filters or seed the database.' };
     }
 
+    const isBreakfastItem = (recipe: any) => {
+      const name = recipe.name.toLowerCase();
+      const dt = recipe.dishType.name.toLowerCase();
+      if (dt.includes('breakfast')) return true;
+      if (name.includes('dosa') || name.includes('idli') || name.includes('poha') || 
+          name.includes('upma') || name.includes('paratha') || name.includes('toast') || 
+          name.includes('omelette') || name.includes('scrambled') || name.includes('sandwich') ||
+          name.includes('uttapam') || name.includes('pongal')) {
+        return true;
+      }
+      return false;
+    };
+
+    const isLunchDinnerItem = (recipe: any) => {
+      const name = recipe.name.toLowerCase();
+      const dt = recipe.dishType.name.toLowerCase();
+      if (dt.includes('main') || dt.includes('rice') || dt.includes('bread') || dt.includes('curry') || dt.includes('gravy')) return true;
+      if (name.includes('biryani') || name.includes('tikka') || name.includes('tandoori') || 
+          name.includes('masala') || name.includes('korma') || name.includes('roti') || 
+          name.includes('nan') || name.includes('dal') || name.includes('tadka') ||
+          name.includes('paneer') || name.includes('chicken') || name.includes('mutton') || name.includes('pulao')) {
+        return true;
+      }
+      return false;
+    };
+
     // ── 3. Score recipes (prefer user ingredient prefs, variety scoring) ───
     const scoredPool = pool.map(recipe => {
       let score = 0;
-      // Boost if recipe uses preferred ingredients
       const hasPreferred = recipe.ingredients.some(ri => preferredIngredientIds.includes(ri.ingredientId));
       if (hasPreferred) score += 10;
-      // Boost quick recipes slightly
       if (recipe.prepTimeMinutes && recipe.prepTimeMinutes <= 20) score += 3;
-      // Random noise for variety
       score += Math.random() * 5;
       return { recipe, score };
-    }).sort((a, b) => b.score - a.score);
+    });
 
     // ── 4. Assign meals ensuring variety (no same recipe twice) ───────────
     const totalSlots = days * mealsPerDay;
     const assignments: { dayIndex: number; dayName: string; mealSlot: string; recipe: any; estimatedCost: number }[] = [];
     const usedRecipeIds = new Set<string>();
 
+    const recentCuisines: string[] = [];
+    const recentIngredients = new Set<string>();
+
+    const getRecipeMainIngredients = (recipe: any): string[] => {
+      return recipe.ingredients
+        .map((ri: any) => ri.ingredient.canonicalName.toLowerCase())
+        .slice(0, 3);
+    };
+
     // Categorise by dish type for appropriate slot assignment
     const bySlot: Record<string, typeof scoredPool> = { Breakfast: [], Lunch: [], Dinner: [] };
     for (const item of scoredPool) {
-      const dt = item.recipe.dishType.name.toLowerCase();
-      if (dt.includes('breakfast') || dt.includes('snack')) bySlot.Breakfast.push(item);
-      else if (dt.includes('main') || dt.includes('rice') || dt.includes('bread')) {
+      if (isBreakfastItem(item.recipe)) {
+        bySlot.Breakfast.push(item);
+      } else if (isLunchDinnerItem(item.recipe)) {
         bySlot.Lunch.push(item);
         bySlot.Dinner.push(item);
       } else {
         bySlot.Lunch.push(item);
         bySlot.Dinner.push(item);
-        bySlot.Breakfast.push(item);
       }
     }
 
@@ -145,9 +176,39 @@ export class WeeklyPlannerService {
 
         if (pool2.length === 0) break;
 
-        const idx = Math.floor(Math.random() * Math.min(10, pool2.length));
-        const chosen = pool2[idx];
+        // Apply rotation penalties dynamically
+        const scoredPoolWithRotation = pool2
+          .map(c => {
+            let penalty = 0;
+            const cuisineGroup = c.recipe.cuisineRegion?.regionGroup?.name;
+            if (cuisineGroup && recentCuisines.includes(cuisineGroup)) {
+              penalty += 15;
+            }
+            const mainIngs = getRecipeMainIngredients(c.recipe);
+            const dupCount = mainIngs.filter(ing => recentIngredients.has(ing)).length;
+            penalty += dupCount * 20;
+
+            return { ...c, adjustedScore: c.score - penalty };
+          })
+          .sort((a, b) => b.adjustedScore - a.adjustedScore);
+
+        const idx = Math.floor(Math.random() * Math.min(5, scoredPoolWithRotation.length));
+        const chosen = scoredPoolWithRotation[idx];
         usedRecipeIds.add(chosen.recipe.id);
+
+        // Update rotation history
+        const chosenCuisine = chosen.recipe.cuisineRegion?.regionGroup?.name;
+        if (chosenCuisine) {
+          recentCuisines.push(chosenCuisine);
+          if (recentCuisines.length > 2) recentCuisines.shift();
+        }
+        const chosenIngs = getRecipeMainIngredients(chosen.recipe);
+        chosenIngs.forEach(ing => recentIngredients.add(ing));
+        if (recentIngredients.size > 8) {
+          const arr = Array.from(recentIngredients);
+          recentIngredients.clear();
+          arr.slice(arr.length - 6).forEach(ing => recentIngredients.add(ing));
+        }
 
         // Estimate cost from catalog
         let cost = 0;
