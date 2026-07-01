@@ -286,6 +286,20 @@ export class BudgetPlannerService {
           cuisineRegion: (p.recipe as any).cuisineRegion,
           dishType: (p.recipe as any).dishType,
           ingredientCount: p.recipe.ingredients.length,
+          ingredients: p.recipe.ingredients.map((ri: any) => ({
+            id: ri.id,
+            recipeId: ri.recipeId,
+            ingredientId: ri.ingredientId,
+            quantity: ri.quantity,
+            unit: ri.unit,
+            ingredient: {
+              id: ri.ingredient.id,
+              canonicalName: ri.ingredient.canonicalName,
+              category: ri.ingredient.category,
+              dietType: ri.ingredient.dietType,
+              defaultUnit: ri.ingredient.defaultUnit
+            }
+          }))
         },
         estimatedCost: Math.round(p.estimatedCost * 100) / 100,
       })),

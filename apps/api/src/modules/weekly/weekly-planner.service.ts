@@ -180,6 +180,20 @@ export class WeeklyPlannerService {
             dishType: chosen.recipe.dishType,
             sourceUrl: chosen.recipe.sourceUrl,
             ingredientCount: chosen.recipe.ingredients.length,
+            ingredients: chosen.recipe.ingredients.map((ri: any) => ({
+              id: ri.id,
+              recipeId: ri.recipeId,
+              ingredientId: ri.ingredientId,
+              quantity: ri.quantity,
+              unit: ri.unit,
+              ingredient: {
+                id: ri.ingredient.id,
+                canonicalName: ri.ingredient.canonicalName,
+                category: ri.ingredient.category,
+                dietType: ri.ingredient.dietType,
+                defaultUnit: ri.ingredient.defaultUnit
+              }
+            }))
           },
           estimatedCost: Math.max(Math.round(cost * 100) / 100, 30),
         });
