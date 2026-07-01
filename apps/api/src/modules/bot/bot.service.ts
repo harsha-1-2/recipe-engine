@@ -185,7 +185,27 @@ Rules:
         }
       }
 
-      suggestions = matched.slice(0, 4);
+      // Take up to 3 matched recipes, and fill the remaining with random ones from DB for discovery
+      const topMatched = matched.slice(0, 3);
+      const matchedIds = topMatched.map(m => m.id);
+
+      const randomPool = await prisma.recipe.findMany({
+        where: {
+          dietType: prefs.diet as any,
+          id: { notIn: matchedIds }
+        },
+        include: { cuisineRegion: true, ingredients: { include: { ingredient: true } } },
+        take: 30
+      });
+
+      suggestions = [...topMatched];
+
+      // Fill remaining slots with random recipes from DB (up to 4 total)
+      if (suggestions.length < 4 && randomPool.length > 0) {
+        const shuffledRandom = randomPool.sort(() => 0.5 - Math.random());
+        const needed = 4 - suggestions.length;
+        suggestions.push(...shuffledRandom.slice(0, needed));
+      }
     } catch (_) {}
   }
 

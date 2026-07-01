@@ -12,13 +12,39 @@ export default function BotPage() {
   const { addToCart } = useCart();
   const { token } = useAuth();
   const [messages, setMessages] = useState<Message[]>([
-    { role: 'ai', content: `Hi! I'm your AI Recipe Assistant powered by Groq 🍊\n\nI see you're ${diet === 'VEG' ? 'vegetarian 🌱' : diet === 'EGG' ? 'eggetarian 🥚' : 'a non-veg lover 🍗'} with a budget of ₹${budget.toLocaleString()} for ${familySize} people.\n\nAsk me anything — "suggest a quick dinner", "high protein lunch", "weekend special" — and I'll give you personalized recipe ideas you can add straight to your cart!` }
+    { role: 'ai', content: `Hi! I'm your AI Recipe Assistant powered by Groq 🍊\n\nPreparing your personalized recipe assistant...` }
   ]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
+
+  // Load custom welcome message based on real database recipes on mount
+  useEffect(() => {
+    const loadWelcomeMessage = async () => {
+      try {
+        const res = await fetch(`${API_URL}/api/recipes?diet=${diet}&limit=3`);
+        const data = await res.json();
+        const recipes = data.recipes || [];
+        
+        let recipeSuggestionText = '';
+        if (recipes.length > 0) {
+          const names = recipes.map((r: any) => r.name).join(', ');
+          recipeSuggestionText = `\n\nBased on your diet, here are some popular options from our database: **${names}**!`;
+        }
+
+        const welcomeText = `Hi! I'm your AI Recipe Assistant powered by Groq 🍊\n\nI see you're ${diet === 'VEG' ? 'vegetarian 🌱' : diet === 'EGG' ? 'eggetarian 🥚' : 'a non-veg lover 🍗'} with a budget of ₹${budget.toLocaleString()} for ${familySize} people.${recipeSuggestionText}\n\nAsk me anything — "suggest a quick dinner", "high protein lunch", "weekend special" — and I'll give you personalized recipe ideas you can add straight to your cart!`;
+        
+        setMessages([{ role: 'ai', content: welcomeText }]);
+      } catch (err) {
+        // Fallback welcome message
+        const welcomeText = `Hi! I'm your AI Recipe Assistant powered by Groq 🍊\n\nI see you're ${diet === 'VEG' ? 'vegetarian 🌱' : diet === 'EGG' ? 'eggetarian 🥚' : 'a non-veg lover 🍗'} with a budget of ₹${budget.toLocaleString()} for ${familySize} people.\n\nAsk me anything — "suggest a quick dinner", "high protein lunch", "weekend special" — and I'll give you personalized recipe ideas you can add straight to your cart!`;
+        setMessages([{ role: 'ai', content: welcomeText }]);
+      }
+    };
+    loadWelcomeMessage();
+  }, [diet, budget, familySize]);
 
   const send = async () => {
     if (!input.trim() || loading) return;
