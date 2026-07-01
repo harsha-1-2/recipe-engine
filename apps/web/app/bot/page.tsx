@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { usePreferences } from '../preferences-context';
 import { useCart } from '../cart-context';
+import { useAuth } from '../auth-context';
 import { API_URL } from '../config';
 
 type Message = { role: 'ai' | 'user'; content: string; suggestions?: any[] };
@@ -9,6 +10,7 @@ type Message = { role: 'ai' | 'user'; content: string; suggestions?: any[] };
 export default function BotPage() {
   const { diet, budget, familySize, allergies } = usePreferences();
   const { addToCart } = useCart();
+  const { token } = useAuth();
   const [messages, setMessages] = useState<Message[]>([
     { role: 'ai', content: `Hi! I'm your AI Recipe Assistant powered by Groq 🍊\n\nI see you're ${diet === 'VEG' ? 'vegetarian 🌱' : diet === 'EGG' ? 'eggetarian 🥚' : 'a non-veg lover 🍗'} with a budget of ₹${budget.toLocaleString()} for ${familySize} people.\n\nAsk me anything — "suggest a quick dinner", "high protein lunch", "weekend special" — and I'll give you personalized recipe ideas you can add straight to your cart!` }
   ]);
@@ -26,9 +28,13 @@ export default function BotPage() {
     setLoading(true);
 
     try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
       const res = await fetch(`${API_URL}/api/bot/chat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ message: userMsg, preferences: { diet, budget, familySize, allergies } })
       });
       const data = await res.json();

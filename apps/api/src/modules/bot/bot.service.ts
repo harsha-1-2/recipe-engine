@@ -7,13 +7,18 @@ const prisma = new PrismaClient();
 
 export async function handleBotChat(userMessage: string, prefs: {
   diet: string; budget: number; familySize: number; allergies: string[];
+  preferredIngredients?: string[];
 }) {
   // Fetch a sample of recipes from DB matching the diet to give AI context
-  const sampleRecipes = await prisma.recipe.findMany({
+  const allRecipes = await prisma.recipe.findMany({
     where: { dietType: prefs.diet as any },
-    take: 20,
-    include: { cuisineRegion: true }
+    select: { name: true, cuisineRegion: { select: { name: true } }, dietType: true },
+    take: 150,
   });
+
+  // Shuffle in memory and pick 20
+  const shuffled = allRecipes.sort(() => 0.5 - Math.random());
+  const sampleRecipes = shuffled.slice(0, 20);
 
   const recipeContext = sampleRecipes
     .map(r => `- ${r.name} (${r.cuisineRegion?.name || 'Indian'}, ${r.dietType})`)
@@ -25,6 +30,7 @@ User preferences:
 - Weekly budget: ₹${prefs.budget}
 - Family size: ${prefs.familySize} people
 - Allergies/avoid: ${prefs.allergies.length > 0 ? prefs.allergies.join(', ') : 'None'}
+- Preferred ingredients: ${prefs.preferredIngredients && prefs.preferredIngredients.length > 0 ? prefs.preferredIngredients.join(', ') : 'None'}
 
 Available recipes in the system (suggest ONLY from this list when possible):
 ${recipeContext}
@@ -32,9 +38,10 @@ ${recipeContext}
 Rules:
 1. Always tailor suggestions to the user's diet and budget.
 2. Never suggest recipes with allergens the user avoids.
-3. Be warm, concise, and use food emojis occasionally.
-4. If suggesting recipes, list them clearly so they can be parsed. Format recipe suggestions as: **Recipe Name** — short description.
-5. Return a JSON object at the end of your response in this exact format (always include it even if empty):
+3. Prioritize suggesting recipes that use the user's Preferred ingredients if possible.
+4. Be warm, concise, and use food emojis occasionally.
+5. If suggesting recipes, list them clearly so they can be parsed. Format recipe suggestions as: **Recipe Name** — short description.
+6. Return a JSON object at the end of your response in this exact format (always include it even if empty):
 <SUGGESTIONS>{"recipes":[{"name":"Recipe Name 1"},{"name":"Recipe Name 2"}]}</SUGGESTIONS>`;
 
   const completion = await groq.chat.completions.create({
@@ -58,19 +65,30 @@ Rules:
       const parsed = JSON.parse(suggestMatch[1]);
       const names: string[] = (parsed.recipes || []).map((r: any) => r.name);
 
-      // Try to match names to actual DB recipes
-      const matched = await prisma.recipe.findMany({
-        where: { name: { in: names } },
-        include: { cuisineRegion: true, ingredients: { include: { ingredient: true } } }
-      });
+      // Try to match names case-insensitively to actual DB recipes
+      let matched: any[] = [];
+      if (names.length > 0) {
+        matched = await prisma.recipe.findMany({
+          where: {
+            OR: names.map(name => ({
+              name: { equals: name.trim(), mode: 'insensitive' }
+            }))
+          },
+          include: { cuisineRegion: true, ingredients: { include: { ingredient: true } } }
+        });
+      }
 
       // Fuzzy fallback: partial match
-      const unmatchedNames = names.filter(n => !matched.some(m => m.name === n));
+      const unmatchedNames = names.filter(n => !matched.some(m => m.name.toLowerCase() === n.toLowerCase().trim()));
       const remainingUnmatched: string[] = [];
+      const stopWords = new Set(['healthy', 'quick', 'easy', 'style', 'recipe', 'indian', 'best', 'simple', 'classic', 'homemade', 'delicious', 'spicy']);
 
       for (const uname of unmatchedNames) {
+        const words = uname.toLowerCase().split(/\s+/).filter(w => !stopWords.has(w) && w.length > 2);
+        const searchWord = words[0] || uname.split(' ')[0];
+
         const fuzzy = await prisma.recipe.findFirst({
-          where: { name: { contains: uname.split(' ')[0], mode: 'insensitive' } },
+          where: { name: { contains: searchWord, mode: 'insensitive' } },
           include: { cuisineRegion: true, ingredients: { include: { ingredient: true } } }
         });
         if (fuzzy) {
