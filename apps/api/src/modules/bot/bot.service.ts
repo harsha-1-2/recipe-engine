@@ -9,16 +9,18 @@ export async function handleBotChat(userMessage: string, prefs: {
   diet: string; budget: number; familySize: number; allergies: string[];
   preferredIngredients?: string[];
 }) {
-  // Fetch a sample of recipes from DB matching the diet to give AI context
-  const allRecipes = await prisma.recipe.findMany({
+  // Fetch top 20 recipes by ingredient count (richest recipes) matching the diet
+  const sampleRecipes = await prisma.recipe.findMany({
     where: { dietType: prefs.diet as any },
-    select: { name: true, cuisineRegion: { select: { name: true } }, dietType: true },
-    take: 150,
+    select: {
+      name: true,
+      cuisineRegion: { select: { name: true } },
+      dietType: true,
+      _count: { select: { ingredients: true } }
+    },
+    orderBy: { ingredients: { _count: 'desc' } },
+    take: 20,
   });
-
-  // Shuffle in memory and pick 20
-  const shuffled = allRecipes.sort(() => 0.5 - Math.random());
-  const sampleRecipes = shuffled.slice(0, 20);
 
   const recipeContext = sampleRecipes
     .map(r => `- ${r.name} (${r.cuisineRegion?.name || 'Indian'}, ${r.dietType})`)
@@ -102,7 +104,10 @@ Rules:
       for (const uname of remainingUnmatched.slice(0, 2)) {
         try {
           const extracted = await extractRecipeWithGroq(`recipe details for ${uname}`);
-          if (!extracted || !extracted.name) continue;
+          if (!extracted || !extracted.name) {
+            console.warn(`[Bot] LLM returned empty recipe for "${uname}", skipping.`);
+            continue;
+          }
 
           let regionGroup = await prisma.regionGroup.findFirst({
             where: { name: { equals: 'Indian Regional', mode: 'insensitive' } }
@@ -179,9 +184,41 @@ Rules:
 
           if (fullyCreatedRecipe) {
             matched.push(fullyCreatedRecipe);
+            console.log(`[Bot] ✅ Dynamically generated and saved recipe: "${fullyCreatedRecipe.name}"`);
           }
-        } catch (err) {
-          console.error(`Failed to generate recipe dynamically for ${uname}:`, err);
+        } catch (err: any) {
+          console.error(`[Bot] ❌ Failed to generate recipe for "${uname}":`, err?.message || err);
+          // Retry with a simpler prompt
+          try {
+            const retryExtracted = await extractRecipeWithGroq(`simple Indian ${uname} recipe`);
+            if (retryExtracted?.name) {
+              const dishType = await prisma.dishType.findFirst({ where: { name: { contains: 'Main', mode: 'insensitive' } } });
+              const cuisineRegion = await prisma.cuisineRegion.findFirst({ where: { name: { contains: 'Indian', mode: 'insensitive' } } });
+              if (dishType && cuisineRegion) {
+                const retryRecipe = await prisma.recipe.create({
+                  data: {
+                    name: retryExtracted.name,
+                    dietType: retryExtracted.dietType || 'VEG',
+                    cuisineRegionId: cuisineRegion.id,
+                    dishTypeId: dishType.id,
+                    servesDefault: retryExtracted.serves || 2,
+                    instructions: retryExtracted.steps?.join('\n') || '',
+                    source: 'BOT_GENERATED',
+                  }
+                });
+                const fullRetry = await prisma.recipe.findUnique({
+                  where: { id: retryRecipe.id },
+                  include: { cuisineRegion: true, ingredients: { include: { ingredient: true } } }
+                });
+                if (fullRetry) {
+                  matched.push(fullRetry);
+                  console.log(`[Bot] ✅ Retry succeeded for recipe: "${fullRetry.name}"`);
+                }
+              }
+            }
+          } catch (retryErr: any) {
+            console.error(`[Bot] ❌ Retry also failed for "${uname}":`, retryErr?.message || retryErr);
+          }
         }
       }
 
