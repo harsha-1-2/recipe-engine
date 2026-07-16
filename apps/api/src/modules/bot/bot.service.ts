@@ -27,7 +27,7 @@ export async function handleBotChat(
   },
   history?: { role: string; content: string }[]
 ) {
-  const systemPrompt = `You are a friendly Indian recipe assistant for a grocery-to-cart app.
+  const systemPrompt = `You are a friendly Indian recipe assistant for a grocery-to-cart app.but u can suggest other country  recipes also if users explicitly asks for it .
 Your ONLY job is to help users with food, recipes, meal planning, Indian cooking, sweets, desserts, snacks, and related food topics.
 
 User preferences (you MUST strictly respect all of these for every suggestion):
