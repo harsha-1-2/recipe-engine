@@ -54,15 +54,6 @@ export default function AdminPage() {
         <p>Upload your recipe CSV and grocery Excel files to populate the database instantly.</p>
       </div>
 
-      {/* Quick start tip */}
-      <div style={{ background: 'var(--color-primary-pale)', border: '1px solid var(--color-primary-light)', borderRadius: 'var(--radius-md)', padding: '1rem 1.2rem', marginBottom: '1.5rem', fontSize: '0.87rem', color: 'var(--color-primary-dark)' }}>
-        <strong>⚡ Quick Start with recipes_clean.csv</strong>
-        <p style={{ marginTop: '0.3rem', lineHeight: 1.6 }}>
-          Place your <code>recipes_clean.csv</code> in the project root, then run:<br />
-          <code style={{ background: 'rgba(0,0,0,0.08)', padding: '0.15rem 0.4rem', borderRadius: 4 }}>cd apps/api && npm run seed:csv</code><br />
-          This loads all 6,800+ recipes with ingredients directly into the database.
-        </p>
-      </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '1.2rem' }}>
 
