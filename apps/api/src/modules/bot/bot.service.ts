@@ -1,254 +1,214 @@
 import Groq from 'groq-sdk';
 import { PrismaClient } from '@prisma/client';
-import { extractRecipeWithGroq, checkIfFoodItem, createDynamicIngredientAndCatalogItem } from '../../lib/ai/groq-client';
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY || '' });
 const prisma = new PrismaClient();
 
-export async function handleBotChat(userMessage: string, prefs: {
-  diet: string; budget: number; familySize: number; allergies: string[];
-  preferredIngredients?: string[];
-}) {
-  // Fetch top 20 recipes by ingredient count (richest recipes) matching the diet
-  const sampleRecipes = await prisma.recipe.findMany({
-    where: { dietType: prefs.diet as any },
-    select: {
-      name: true,
-      cuisineRegion: { select: { name: true } },
-      dietType: true,
-      _count: { select: { ingredients: true } }
-    },
-    orderBy: { ingredients: { _count: 'desc' } },
-    take: 20,
-  });
+// Phrases that indicate the bot deflected an off-topic query
+const DEFLECTION_MARKERS = [
+  'recipe assistant',
+  'only help with food',
+  'food, recipes',
+  'ask me about food',
+  'please ask about food',
+  'query about food',
+];
 
-  const recipeContext = sampleRecipes
-    .map(r => `- ${r.name} (${r.cuisineRegion?.name || 'Indian'}, ${r.dietType})`)
-    .join('\n');
+function isOffTopicReply(reply: string): boolean {
+  const lower = reply.toLowerCase();
+  return DEFLECTION_MARKERS.some(m => lower.includes(m));
+}
 
+export async function handleBotChat(
+  userMessage: string,
+  prefs: {
+    diet: string; budget: number; familySize: number; allergies: string[];
+    preferredIngredients?: string[];
+  },
+  history?: { role: string; content: string }[]
+) {
   const systemPrompt = `You are a friendly Indian recipe assistant for a grocery-to-cart app.
-User preferences:
-- Diet: ${prefs.diet}
-- Weekly budget: ₹${prefs.budget}
-- Family size: ${prefs.familySize} people
-- Allergies/avoid: ${prefs.allergies.length > 0 ? prefs.allergies.join(', ') : 'None'}
-- Preferred ingredients: ${prefs.preferredIngredients && prefs.preferredIngredients.length > 0 ? prefs.preferredIngredients.join(', ') : 'None'}
+Your ONLY job is to help users with food, recipes, meal planning, Indian cooking, sweets, desserts, snacks, and related food topics.
 
-Available recipes in the system (suggest ONLY from this list when possible):
-${recipeContext}
+User preferences (you MUST strictly respect all of these for every suggestion):
+- Diet type: ${prefs.diet}${prefs.diet === 'VEG' ? ' (vegetarian — no meat, no eggs, no fish)' : prefs.diet === 'EGG' ? ' (eggetarian — no meat, no fish, eggs allowed)' : ' (non-vegetarian — all ingredients allowed)'}
+- Weekly budget: ₹${prefs.budget} for ${prefs.familySize} people
+- Allergies / ingredients to avoid: ${prefs.allergies.length > 0 ? prefs.allergies.join(', ') : 'None'}
+- Preferred ingredients (prioritize recipes using these): ${prefs.preferredIngredients && prefs.preferredIngredients.length > 0 ? prefs.preferredIngredients.join(', ') : 'None specified'}
 
-Rules:
-1. Always tailor suggestions to the user's diet and budget.
-2. Never suggest recipes with allergens the user avoids.
-3. Prioritize suggesting recipes that use the user's Preferred ingredients if possible.
-4. Be warm, concise, and use food emojis occasionally.
-5. If suggesting recipes, list them clearly so they can be parsed. Format recipe suggestions as: **Recipe Name** — short description.
-6. Return a JSON object at the end of your response in this exact format (always include it even if empty):
-<SUGGESTIONS>{"recipes":[{"name":"Recipe Name 1"},{"name":"Recipe Name 2"}]}</SUGGESTIONS>`;
+═══ STRICT RULES ═══
+
+RULE 1 — FOOD ONLY:
+If the user asks about anything that is NOT related to food, recipes, cooking, meal planning, or Indian cuisine, you MUST respond with ONLY this exact sentence and nothing else:
+"I'm your Indian Recipe Assistant 🍛 — I can only help with food, recipes, and meal planning. Try asking: 'Suggest Diwali sweets', 'Quick dinner ideas', or 'High protein breakfast'!"
+Then emit: <SUGGESTIONS>{"recipes":[]}</SUGGESTIONS>
+
+RULE 2 — SUGGEST 10 RECIPES STRICTLY GROUNDED TO THE USER'S REQUEST:
+For every food-related query, suggest exactly 10 Indian recipes from your knowledge of Indian cuisine.
+ALL 10 suggestions MUST directly answer what the user is asking for — do NOT pad with unrelated categories.
+Examples:
+- User asks "Diwali sweets" → suggest 10 Indian sweets/mithai only (Gulab Jamun, Kaju Katli, Besan Ladoo…)
+- User asks "high protein breakfast" → suggest 10 high-protein Indian breakfasts only
+- User asks "quick dinner" → suggest 10 quick Indian dinner recipes only
+
+Every suggestion MUST satisfy ALL of the following simultaneously:
+1. Directly relevant to the user's query and conversational context.
+2. Matches diet type: ${prefs.diet} — NEVER violate this. E.g. for VEG, no meat/eggs/fish.
+3. Contains NONE of these allergens: ${prefs.allergies.length > 0 ? prefs.allergies.join(', ') : 'None'}.
+4. Prioritizes user's preferred ingredients: ${prefs.preferredIngredients && prefs.preferredIngredients.length > 0 ? prefs.preferredIngredients.join(', ') : 'None'}.
+5. Budget-appropriate for ${prefs.familySize} people within ₹${prefs.budget}/week.
+
+Use well-known authentic Indian recipe names (e.g. "Gulab Jamun", "Palak Paneer", "Masala Dosa").
+
+RULE 3 — FORMAT:
+List suggestions clearly: **Recipe Name** — short description (1 line).
+Be warm, use food emojis occasionally.
+
+RULE 4 — SUGGESTIONS BLOCK (MANDATORY):
+Always end your response with this exact block — even if the list is empty:
+<SUGGESTIONS>{"recipes":[{"name":"Recipe Name 1"},{"name":"Recipe Name 2"},...up to 10]}</SUGGESTIONS>`;
+
+
+
+  // Build message list with conversation history for multi-turn context
+  const messages: { role: 'system' | 'user' | 'assistant'; content: string }[] = [
+    { role: 'system', content: systemPrompt },
+  ];
+
+  // Add conversation history (last 6 messages max) for multi-turn context
+  if (history && history.length > 0) {
+    const recentHistory = history.slice(-6);
+    for (const msg of recentHistory) {
+      const role = msg.role === 'user' ? 'user' as const : 'assistant' as const;
+      messages.push({ role, content: msg.content });
+    }
+  }
+
+  messages.push({ role: 'user', content: userMessage });
 
   const completion = await groq.chat.completions.create({
     model: 'llama-3.3-70b-versatile',
-    messages: [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: userMessage }
-    ],
-    temperature: 0.75,
-    max_tokens: 600,
+    messages,
+    temperature: 0.7,
+    max_tokens: 900,
   });
 
   const rawReply = completion.choices[0]?.message?.content || 'Sorry, I could not generate a response.';
 
-  // Extract suggestion block
-  const suggestMatch = rawReply.match(/<SUGGESTIONS>([\s\S]*?)<\/SUGGESTIONS>/);
+  // Extract suggestion block — case-insensitive regex
+  const suggestMatch = rawReply.match(/<SUGGESTIONS>([\s\S]*?)<\/SUGGESTIONS>/i);
   let suggestions: any[] = [];
+  let offTopic = false;
 
   if (suggestMatch) {
     try {
       const parsed = JSON.parse(suggestMatch[1]);
-      const names: string[] = (parsed.recipes || []).map((r: any) => r.name);
+      const recipeEntries: { name: string }[] = (parsed.recipes || []);
 
-      // Try to match names case-insensitively to actual DB recipes
+      // Collect all candidate names (no [NEW] tagging anymore)
+      const candidateNames: string[] = recipeEntries
+        .map(e => e.name.replace(/\[NEW\]\s*/gi, '').trim())
+        .filter(Boolean);
+
+      console.log(`[Bot] Parsed ${candidateNames.length} suggestions: [${candidateNames.join(', ')}]`);
+
+      // ── Tier 1: Exact case-insensitive match ──
       let matched: any[] = [];
-      if (names.length > 0) {
+      if (candidateNames.length > 0) {
         matched = await prisma.recipe.findMany({
           where: {
-            OR: names.map(name => ({
-              name: { equals: name.trim(), mode: 'insensitive' }
+            OR: candidateNames.map(name => ({
+              name: { equals: name.trim(), mode: 'insensitive' as const }
             }))
           },
-          include: { cuisineRegion: true, ingredients: { include: { ingredient: true } } }
+          include: {
+            cuisineRegion: true,
+            dishType: true,
+            ingredients: { include: { ingredient: true } }
+          }
         });
+        console.log(`[Bot] Tier 1 exact matches: ${matched.length}`);
       }
 
-      // Fuzzy fallback: partial match
-      const unmatchedNames = names.filter(n => !matched.some(m => m.name.toLowerCase() === n.toLowerCase().trim()));
-      const remainingUnmatched: string[] = [];
-      const stopWords = new Set(['healthy', 'quick', 'easy', 'style', 'recipe', 'indian', 'best', 'simple', 'classic', 'homemade', 'delicious', 'spicy']);
+      // ── Tier 2: Stricter fuzzy fallback (require multiple keyword overlap) ──
+      const exactMatchedNames = new Set(matched.map(m => m.name.toLowerCase()));
+      const unmatchedNames = candidateNames.filter(n => !exactMatchedNames.has(n.toLowerCase().trim()));
+
+      const stopWords = new Set([
+        'healthy', 'quick', 'easy', 'style', 'recipe', 'indian', 'best',
+        'simple', 'classic', 'homemade', 'delicious', 'spicy', 'with', 'and',
+        'the', 'for', 'sweet', 'fresh'
+      ]);
 
       for (const uname of unmatchedNames) {
         const words = uname.toLowerCase().split(/\s+/).filter(w => !stopWords.has(w) && w.length > 2);
-        const searchWord = words[0] || uname.split(' ')[0];
 
-        const fuzzy = await prisma.recipe.findFirst({
-          where: { name: { contains: searchWord, mode: 'insensitive' } },
-          include: { cuisineRegion: true, ingredients: { include: { ingredient: true } } }
-        });
-        if (fuzzy) {
-          matched.push(fuzzy);
+        if (words.length >= 2) {
+          // Require ALL significant keywords to match (stricter)
+          const fuzzy = await prisma.recipe.findFirst({
+            where: {
+              AND: words.map(w => ({ name: { contains: w, mode: 'insensitive' as const } }))
+            },
+            include: {
+              cuisineRegion: true,
+              dishType: true,
+              ingredients: { include: { ingredient: true } }
+            }
+          });
+          if (fuzzy && !exactMatchedNames.has(fuzzy.name.toLowerCase())) {
+            matched.push(fuzzy);
+            exactMatchedNames.add(fuzzy.name.toLowerCase());
+            console.log(`[Bot] Fuzzy matched "${uname}" → "${fuzzy.name}"`);
+          } else {
+            console.log(`[Bot] No fuzzy match for "${uname}" — skipping (no dynamic creation)`);
+          }
+        } else if (words.length === 1) {
+          const fuzzy = await prisma.recipe.findFirst({
+            where: { name: { contains: words[0], mode: 'insensitive' as const } },
+            include: {
+              cuisineRegion: true,
+              dishType: true,
+              ingredients: { include: { ingredient: true } }
+            }
+          });
+          if (fuzzy && !exactMatchedNames.has(fuzzy.name.toLowerCase())) {
+            matched.push(fuzzy);
+            exactMatchedNames.add(fuzzy.name.toLowerCase());
+            console.log(`[Bot] Single-keyword matched "${uname}" → "${fuzzy.name}"`);
+          } else {
+            console.log(`[Bot] No match for "${uname}" — skipping`);
+          }
         } else {
-          remainingUnmatched.push(uname);
+          console.log(`[Bot] "${uname}" too short to fuzzy match — skipping`);
         }
       }
 
-      // Generate missing recipes dynamically
-      for (const uname of remainingUnmatched.slice(0, 2)) {
-        try {
-          const extracted = await extractRecipeWithGroq(`recipe details for ${uname}`);
-          if (!extracted || !extracted.name) {
-            console.warn(`[Bot] LLM returned empty recipe for "${uname}", skipping.`);
-            continue;
-          }
+      // Return top 5 strictly matched recipes only — no random fill
+      const topMatched = matched.slice(0, 5);
 
-          let regionGroup = await prisma.regionGroup.findFirst({
-            where: { name: { equals: 'Indian Regional', mode: 'insensitive' } }
-          });
-          if (!regionGroup) {
-            regionGroup = await prisma.regionGroup.create({
-              data: { name: 'Indian Regional' }
-            });
-          }
+      console.log(`[Bot] Returning ${topMatched.length} strictly DB-matched suggestions (no random fill)`);
 
-          const cuisineName = extracted.cuisineRegion || 'Indian';
-          let cuisineRegion = await prisma.cuisineRegion.findFirst({
-            where: { name: { equals: cuisineName, mode: 'insensitive' } }
-          });
-          if (!cuisineRegion) {
-            cuisineRegion = await prisma.cuisineRegion.create({
-              data: { name: cuisineName, regionGroupId: regionGroup.id }
-            });
-          }
+      suggestions = topMatched;
 
-          let dishType = await prisma.dishType.findFirst({
-            where: { name: { equals: 'Main Course', mode: 'insensitive' } }
-          });
-          if (!dishType) {
-            dishType = await prisma.dishType.create({
-              data: { name: 'Main Course' }
-            });
-          }
-
-          const newRecipe = await prisma.recipe.create({
-            data: {
-              name: extracted.name,
-              dietType: extracted.dietType || 'VEG',
-              cuisineRegionId: cuisineRegion.id,
-              dishTypeId: dishType.id,
-              servesDefault: extracted.serves || 2,
-              instructions: extracted.steps?.join('\n') || '',
-              source: 'BOT_GENERATED',
-            }
-          });
-
-          for (const ing of extracted.ingredients || []) {
-            if (!ing.name) continue;
-            const canonicalName = ing.name.toLowerCase().trim();
-
-            let dbIngredient = await prisma.ingredient.findUnique({
-              where: { canonicalName }
-            });
-
-            if (!dbIngredient) {
-              const isFood = await checkIfFoodItem(canonicalName);
-              if (isFood) {
-                const created = await createDynamicIngredientAndCatalogItem(canonicalName, 'grocery', ing.unit || 'unit');
-                dbIngredient = created.ingredient;
-              }
-            }
-
-            if (dbIngredient) {
-              await prisma.recipeIngredient.create({
-                data: {
-                  recipeId: newRecipe.id,
-                  ingredientId: dbIngredient.id,
-                  quantity: ing.quantity || null,
-                  unit: ing.unit || null,
-                }
-              });
-            }
-          }
-
-          const fullyCreatedRecipe = await prisma.recipe.findUnique({
-            where: { id: newRecipe.id },
-            include: { cuisineRegion: true, ingredients: { include: { ingredient: true } } }
-          });
-
-          if (fullyCreatedRecipe) {
-            matched.push(fullyCreatedRecipe);
-            console.log(`[Bot] ✅ Dynamically generated and saved recipe: "${fullyCreatedRecipe.name}"`);
-          }
-        } catch (err: any) {
-          console.error(`[Bot] ❌ Failed to generate recipe for "${uname}":`, err?.message || err);
-          // Retry with a simpler prompt
-          try {
-            const retryExtracted = await extractRecipeWithGroq(`simple Indian ${uname} recipe`);
-            if (retryExtracted?.name) {
-              const dishType = await prisma.dishType.findFirst({ where: { name: { contains: 'Main', mode: 'insensitive' } } });
-              const cuisineRegion = await prisma.cuisineRegion.findFirst({ where: { name: { contains: 'Indian', mode: 'insensitive' } } });
-              if (dishType && cuisineRegion) {
-                const retryRecipe = await prisma.recipe.create({
-                  data: {
-                    name: retryExtracted.name,
-                    dietType: retryExtracted.dietType || 'VEG',
-                    cuisineRegionId: cuisineRegion.id,
-                    dishTypeId: dishType.id,
-                    servesDefault: retryExtracted.serves || 2,
-                    instructions: retryExtracted.steps?.join('\n') || '',
-                    source: 'BOT_GENERATED',
-                  }
-                });
-                const fullRetry = await prisma.recipe.findUnique({
-                  where: { id: retryRecipe.id },
-                  include: { cuisineRegion: true, ingredients: { include: { ingredient: true } } }
-                });
-                if (fullRetry) {
-                  matched.push(fullRetry);
-                  console.log(`[Bot] ✅ Retry succeeded for recipe: "${fullRetry.name}"`);
-                }
-              }
-            }
-          } catch (retryErr: any) {
-            console.error(`[Bot] ❌ Retry also failed for "${uname}":`, retryErr?.message || retryErr);
-          }
-        }
+      // Check if this was an off-topic deflection (empty suggestions + deflection language)
+      if (recipeEntries.length === 0 && isOffTopicReply(rawReply)) {
+        offTopic = true;
+        suggestions = [];
+        console.log('[Bot] Off-topic query detected — returning deflection message');
       }
 
-      // Take up to 3 matched recipes, and fill the remaining with random ones from DB for discovery
-      const topMatched = matched.slice(0, 3);
-      const matchedIds = topMatched.map(m => m.id);
-
-      const randomPool = await prisma.recipe.findMany({
-        where: {
-          dietType: prefs.diet as any,
-          id: { notIn: matchedIds }
-        },
-        include: { cuisineRegion: true, ingredients: { include: { ingredient: true } } },
-        take: 30
-      });
-
-      suggestions = [...topMatched];
-
-      // Fill remaining slots with random recipes from DB (up to 4 total)
-      if (suggestions.length < 4 && randomPool.length > 0) {
-        const shuffledRandom = randomPool.sort(() => 0.5 - Math.random());
-        const needed = 4 - suggestions.length;
-        suggestions.push(...shuffledRandom.slice(0, needed));
-      }
-    } catch (_) {}
+    } catch (err: any) {
+      console.error('[Bot] ❌ Suggestion processing failed:', err?.message || err);
+    }
+  } else {
+    console.warn('[Bot] ⚠️ No <SUGGESTIONS> block found in LLM reply. Checking for off-topic...');
+    if (isOffTopicReply(rawReply)) {
+      offTopic = true;
+    }
   }
 
-  // Clean reply (remove the JSON block from what the user sees)
-  const cleanReply = rawReply.replace(/<SUGGESTIONS>[\s\S]*?<\/SUGGESTIONS>/, '').trim();
+  // Clean reply (remove the JSON block from what the user sees) — case-insensitive
+  const cleanReply = rawReply.replace(/<SUGGESTIONS>[\s\S]*?<\/SUGGESTIONS>/i, '').trim();
 
-  return { reply: cleanReply, suggestions };
+  return { reply: cleanReply, suggestions, isOffTopic: offTopic };
 }
-
