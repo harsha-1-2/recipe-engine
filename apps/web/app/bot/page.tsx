@@ -98,29 +98,36 @@ export default function BotPage() {
   };
 
   return (
-    <div style={{ maxWidth: '780px', margin: '0 auto', padding: '0.75rem 0 0', height: 'calc(100vh - 72px)', display: 'flex', flexDirection: 'column' }}>
-      <div className="page-header" style={{ flexShrink: 0, marginBottom: '0.5rem' }}>
-        <span className="section-label">AI Powered</span>
-        <h1 style={{ marginBottom: '0.2rem' }}>Recipe Bot</h1>
-        <p style={{ marginBottom: 0 }}>Personalized to your diet · ₹{budget.toLocaleString()} budget · {familySize} servings · {allergies.length > 0 ? `No ${allergies.join(', ')}` : 'No restrictions'}</p>
+    <div style={{ maxWidth: '780px', margin: '0 auto', height: 'calc(100vh - 140px)', minHeight: '550px', display: 'flex', flexDirection: 'column' }}>
+      <div className="page-header" style={{ flexShrink: 0, paddingBottom: '0.5rem', marginBottom: '0', borderBottom: 'none' }}>
+        <span className="section-label" style={{ marginBottom: '0.2rem' }}>AI Powered</span>
+        <h1 style={{ marginBottom: '0.2rem', fontSize: '1.8rem' }}>Recipe Bot</h1>
+        <p style={{ marginBottom: 0, fontSize: '0.85rem' }}>Personalized to your diet · ₹{budget.toLocaleString()} budget · {familySize} servings · {allergies.length > 0 ? `No ${allergies.join(', ')}` : 'No restrictions'}</p>
       </div>
 
-      {/* Indian-food focused quick chips */}
-      <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '0.6rem', flexShrink: 0 }}>
+      {/* Indian-food focused quick chips (horizontally scrollable) */}
+      <div style={{
+        display: 'flex', gap: '0.5rem', overflowX: 'auto',
+        marginBottom: '0.75rem', paddingBottom: '0.25rem', flexShrink: 0,
+        msOverflowStyle: 'none', scrollbarWidth: 'none'
+      }}>
+        <style>{`.page-header + div::-webkit-scrollbar { display: none; }`}</style>
         {QUICK_CHIPS.map(s => (
           <button
             key={s}
             onClick={() => send(s)}
             style={{
-              padding: '0.3rem 0.75rem',
+              padding: '0.4rem 0.85rem',
               borderRadius: '20px',
-              border: '1.5px solid var(--color-border)',
-              background: 'white',
+              border: '1px solid var(--color-border)',
+              background: '#fafafa',
               cursor: 'pointer',
-              fontSize: '0.78rem',
-              fontWeight: 500,
-              color: 'var(--color-text-muted)',
-              transition: 'all 0.15s',
+              fontSize: '0.75rem',
+              fontWeight: 600,
+              color: 'var(--color-text)',
+              whiteSpace: 'nowrap',
+              transition: 'all 0.15s ease',
+              boxShadow: '0 1px 2px rgba(0,0,0,0.03)'
             }}
             onMouseEnter={e => {
               (e.target as HTMLElement).style.borderColor = 'var(--color-primary)';
@@ -128,7 +135,9 @@ export default function BotPage() {
             }}
             onMouseLeave={e => {
               (e.target as HTMLElement).style.borderColor = 'var(--color-border)';
-              (e.target as HTMLElement).style.color = 'var(--color-text-muted)';
+              (e.target as HTMLElement).style.background = '#fafafa';
+              (e.target as HTMLElement).style.color = 'var(--color-text)';
+              (e.target as HTMLElement).style.boxShadow = '0 1px 2px rgba(0,0,0,0.03)';
             }}
           >
             {s}
@@ -244,7 +253,7 @@ export default function BotPage() {
         </div>
 
         {/* Input */}
-        <div style={{ padding: '1rem 1.2rem', borderTop: '1px solid var(--color-border)', display: 'flex', gap: '0.7rem', flexShrink: 0 }}>
+        <div style={{ padding: '0.75rem 1rem', borderTop: '1px solid var(--color-border)', display: 'flex', gap: '0.7rem', flexShrink: 0, background: 'var(--color-surface)' }}>
           <input
             className="input-field"
             style={{ flex: 1 }}
