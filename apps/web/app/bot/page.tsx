@@ -98,15 +98,15 @@ export default function BotPage() {
   };
 
   return (
-    <div style={{ maxWidth: '780px', margin: '0 auto', padding: '2rem 0', height: 'calc(100vh - 120px)', display: 'flex', flexDirection: 'column' }}>
-      <div className="page-header" style={{ flexShrink: 0 }}>
+    <div style={{ maxWidth: '780px', margin: '0 auto', padding: '0.75rem 0 0', height: 'calc(100vh - 72px)', display: 'flex', flexDirection: 'column' }}>
+      <div className="page-header" style={{ flexShrink: 0, marginBottom: '0.5rem' }}>
         <span className="section-label">AI Powered</span>
-        <h1>Recipe Bot</h1>
-        <p>Personalized to your diet · ₹{budget.toLocaleString()} budget · {familySize} servings · {allergies.length > 0 ? `No ${allergies.join(', ')}` : 'No restrictions'}</p>
+        <h1 style={{ marginBottom: '0.2rem' }}>Recipe Bot</h1>
+        <p style={{ marginBottom: 0 }}>Personalized to your diet · ₹{budget.toLocaleString()} budget · {familySize} servings · {allergies.length > 0 ? `No ${allergies.join(', ')}` : 'No restrictions'}</p>
       </div>
 
       {/* Indian-food focused quick chips */}
-      <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '1rem', flexShrink: 0 }}>
+      <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '0.6rem', flexShrink: 0 }}>
         {QUICK_CHIPS.map(s => (
           <button
             key={s}
