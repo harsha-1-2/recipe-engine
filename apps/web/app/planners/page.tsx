@@ -22,6 +22,9 @@ export default function PlannersPage() {
   const [budgetPlan, setBudgetPlan] = useState<any>(null);
   const [budgetLoading, setBudgetLoading] = useState(false);
 
+  // AI Prompt
+  const [prompt, setPrompt] = useState('');
+
   // Weekly Plan state
   const [weeklyPlan, setWeeklyPlan] = useState<any[]>([]);
   const [weeklyLoading, setWeeklyLoading] = useState(false);
@@ -122,7 +125,7 @@ export default function PlannersPage() {
     try {
       const res = await fetch(`${API}/api/budget-plans`, {
         method: 'POST', headers: authHeaders,
-        body: JSON.stringify({ budgetInr: budget, dietPref: diet, days, mealsPerDay: meals, priceTier, cuisineGroupFilter })
+        body: JSON.stringify({ budgetInr: budget, dietPref: diet, days, mealsPerDay: meals, priceTier, cuisineGroupFilter, prompt })
       });
       const data = await res.json();
       setBudgetPlan(data);
@@ -135,7 +138,7 @@ export default function PlannersPage() {
     try {
       const res = await fetch(`${API}/api/weekly-plans`, {
         method: 'POST', headers: authHeaders,
-        body: JSON.stringify({ dietPref: diet, days, mealsPerDay: meals, cuisineGroupFilter })
+        body: JSON.stringify({ dietPref: diet, days, mealsPerDay: meals, cuisineGroupFilter, prompt })
       });
       const data = await res.json();
       setWeeklyPlan(data.weeklyPlan || []);
@@ -234,6 +237,18 @@ export default function PlannersPage() {
             🚫 Excluding recipes with: {prefs.allergies.join(', ')}
           </div>
         )}
+        
+        {/* AI Prompt */}
+        <div style={{ marginTop: '1.5rem', paddingTop: '1rem', borderTop: '1px solid var(--color-border)' }}>
+          <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginBottom: '0.4rem' }}>✨ Any specific requests? (Optional AI Prompt)</label>
+          <textarea 
+            className="input-field" 
+            placeholder="E.g. I want high protein meals, mostly paneer and chicken, no spicy food..."
+            value={prompt}
+            onChange={e => setPrompt(e.target.value)}
+            style={{ width: '100%', minHeight: '80px', resize: 'vertical' }}
+          />
+        </div>
       </div>
 
       {/* Budget Planner Tab */}
@@ -245,12 +260,18 @@ export default function PlannersPage() {
 
           {budgetPlan && (
             <div>
-              <div className="card" style={{ marginBottom: '1.5rem', borderTop: '4px solid var(--color-primary)', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem', textAlign: 'center' }}>
-                <div><div style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--color-primary-dark)' }}>₹ {budgetPlan.totalEstCost?.toFixed(0)}</div><div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Estimated Cost</div></div>
-                <div><div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#059669' }}>₹ {budgetPlan.saved?.toFixed(0) || 0}</div><div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Saved</div></div>
-                <div><div style={{ fontSize: '1.5rem', fontWeight: 700 }}>{budgetPlan.plan?.length || 0}</div><div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Meals Planned</div></div>
-              </div>
+
               {budgetPlan.cached && <div style={{ marginBottom: '0.75rem', fontSize: '0.8rem', color: 'var(--color-text-muted)', background: '#f0fdf4', padding: '0.5rem 0.75rem', borderRadius: '6px' }}>✅ Loaded from your saved plan (same params, last 24h)</div>}
+
+              {budgetPlan.aiSummary && (
+                <div className="card" style={{ marginBottom: '1.25rem', borderLeft: '4px solid #8b5cf6', background: 'linear-gradient(135deg, #faf5ff, #f5f3ff)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                    <span style={{ fontSize: '1.1rem' }}>🧠</span>
+                    <span style={{ fontWeight: 700, fontSize: '0.9rem', color: '#6d28d9' }}>AI Nutrition Analysis</span>
+                  </div>
+                  <div style={{ fontSize: '0.85rem', color: '#374151', lineHeight: '1.5', whiteSpace: 'pre-wrap' }}>{budgetPlan.aiSummary}</div>
+                </div>
+              )}
 
               <button className="btn-primary" style={{ width: '100%', marginBottom: '1.25rem' }}
                 onClick={() => addAllRecipesToCart(budgetPlan.plan)}>
@@ -313,21 +334,43 @@ export default function PlannersPage() {
 
           {weeklyPlan.length > 0 && (
             <div>
-              {weeklyMeta?.totalEstCost && (
-                <div className="card" style={{ marginBottom: '1.25rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div>
-                    <div style={{ fontWeight: 700, fontSize: '1.1rem' }}>Estimated Weekly Cost</div>
-                    <div style={{ color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>{dietLabel} · {days} days · {meals} meals/day</div>
-                  </div>
-                  <div style={{ fontSize: '1.6rem', fontWeight: 700, color: 'var(--color-primary-dark)' }}>₹ {weeklyMeta.totalEstCost.toFixed(0)}</div>
-                </div>
-              )}
+
               {weeklyMeta?.cached && <div style={{ marginBottom: '0.75rem', fontSize: '0.8rem', color: 'var(--color-text-muted)', background: '#f0fdf4', padding: '0.5rem 0.75rem', borderRadius: '6px' }}>✅ Loaded from your saved weekly plan</div>}
 
               <button className="btn-primary" style={{ width: '100%', marginBottom: '1.25rem' }}
                 onClick={() => addAllRecipesToCart(weeklyPlan)}>
                 🛒 Add All Plan Recipes to Cart
               </button>
+
+              {weeklyMeta?.shoppingList && weeklyMeta.shoppingList.categories && (
+                <div className="card" style={{ marginBottom: '1.25rem', borderLeft: '4px solid #059669', background: 'linear-gradient(135deg, #f0fdf4, #ecfdf5)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                    <span style={{ fontSize: '1.1rem' }}>📋</span>
+                    <span style={{ fontWeight: 700, fontSize: '0.95rem', color: '#065f46' }}>AI Shopping List</span>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '0.75rem', marginBottom: '0.75rem' }}>
+                    {weeklyMeta.shoppingList.categories.map((cat: any, ci: number) => (
+                      <div key={ci} style={{ background: 'white', borderRadius: '8px', padding: '0.6rem 0.8rem', border: '1px solid #d1fae5' }}>
+                        <div style={{ fontWeight: 700, fontSize: '0.82rem', color: '#065f46', marginBottom: '0.4rem' }}>{cat.emoji || '🛒'} {cat.name}</div>
+                        {cat.items?.map((item: any, ii: number) => (
+                          <div key={ii} style={{ fontSize: '0.78rem', color: '#374151', display: 'flex', justifyContent: 'space-between', padding: '0.15rem 0', borderBottom: '1px solid #f0fdf4' }}>
+                            <span>{item.name}</span>
+                            <span style={{ color: '#6b7280', fontWeight: 500 }}>{item.totalQty}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                  {weeklyMeta.shoppingList.prepTips && weeklyMeta.shoppingList.prepTips.length > 0 && (
+                    <div style={{ borderTop: '1px solid #d1fae5', paddingTop: '0.6rem' }}>
+                      <div style={{ fontWeight: 700, fontSize: '0.82rem', color: '#065f46', marginBottom: '0.3rem' }}>💡 Weekend Prep Tips</div>
+                      {weeklyMeta.shoppingList.prepTips.map((tip: string, ti: number) => (
+                        <div key={ti} style={{ fontSize: '0.78rem', color: '#374151', paddingLeft: '0.5rem', marginBottom: '0.2rem' }}>• {tip}</div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
                 {Object.entries(byDay).map(([dayIdx, dayMeals]) => (

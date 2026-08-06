@@ -306,7 +306,7 @@ app.delete('/api/manual-list', requireAuth, async (req: AuthRequest, res) => {
 // ─────────────────────────────────────────────────────────
 app.post('/api/budget-plans', optionalAuth, async (req: AuthRequest, res) => {
   try {
-    const { budgetInr, dietPref, days, mealsPerDay, priceTier, cuisineGroupFilter } = req.body;
+    const { budgetInr, dietPref, days, mealsPerDay, priceTier, cuisineGroupFilter, prompt } = req.body;
     const planner = new BudgetPlannerService();
     const result = await planner.planBudget(
       req.userId || null,
@@ -316,7 +316,8 @@ app.post('/api/budget-plans', optionalAuth, async (req: AuthRequest, res) => {
       mealsPerDay,
       priceTier || 'MIXED',
       true, // saveToDb
-      cuisineGroupFilter
+      cuisineGroupFilter,
+      prompt
     );
     res.json(result);
   } catch (error: any) {
@@ -340,7 +341,7 @@ app.get('/api/budget-plans', requireAuth, async (req: AuthRequest, res) => {
 // ─────────────────────────────────────────────────────────
 app.post('/api/weekly-plans', optionalAuth, async (req: AuthRequest, res) => {
   try {
-    const { dietPref, days, mealsPerDay, cuisineGroupFilter, maxPrepMinutes } = req.body;
+    const { dietPref, days, mealsPerDay, cuisineGroupFilter, maxPrepMinutes, prompt } = req.body;
     const planner = new WeeklyPlannerService();
     const result = await planner.generateWeeklyPlan(req.userId || null, {
       dietPref: dietPref || 'VEG',
@@ -348,6 +349,7 @@ app.post('/api/weekly-plans', optionalAuth, async (req: AuthRequest, res) => {
       mealsPerDay: mealsPerDay || 3,
       cuisineGroupFilter,
       maxPrepMinutes,
+      prompt,
     });
     res.json(result);
   } catch (e: any) {
@@ -370,7 +372,7 @@ app.get('/api/weekly-plans', requireAuth, async (req: AuthRequest, res) => {
 // ─────────────────────────────────────────────────────────
 app.post('/api/bot/chat', optionalAuth, async (req: AuthRequest, res) => {
   try {
-    const { message, preferences } = req.body;
+    const { message, preferences, history } = req.body;
     if (!message) return res.status(400).json({ error: 'message is required' });
     if (!process.env.GROQ_API_KEY) {
       return res.status(503).json({ reply: '⚠️ GROQ_API_KEY is not set in apps/api/.env — please add it to enable the AI bot.', suggestions: [] });
@@ -389,7 +391,7 @@ app.post('/api/bot/chat', optionalAuth, async (req: AuthRequest, res) => {
       }
     }
 
-    const result = await handleBotChat(message, mergedPrefs);
+    const result = await handleBotChat(message, mergedPrefs, history);
     res.json(result);
   } catch (error: any) {
     res.status(500).json({ reply: `Error: ${error.message}`, suggestions: [] });

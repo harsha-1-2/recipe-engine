@@ -1,5 +1,6 @@
 import { prisma } from '../../lib/prisma';
 import { DietType, PriceTier } from '@prisma/client';
+import { fuzzyMatchRecipeNames, verifyAssignments } from '../../lib/ai/recipe-matcher';
 
 interface PlanMeal {
   recipe: { id: string; name: string; servesDefault: number; dietType: string; ingredients: any[] };
@@ -18,7 +19,8 @@ export class BudgetPlannerService {
     mealsPerDay: number,
     priceTier: PriceTier = 'MIXED',
     saveToDb: boolean = true,
-    cuisineGroupFilter?: string
+    cuisineGroupFilter?: string,
+    prompt?: string
   ) {
     // ── 1. Load user context (allergies + brand prefs + ingredient preferences) ──
     let allergicIngredientIds: string[] = [];
@@ -155,10 +157,10 @@ export class BudgetPlannerService {
       const name = recipe.name.toLowerCase();
       const dt = recipe.dishType.name.toLowerCase();
       if (dt.includes('breakfast')) return true;
-      if (name.includes('dosa') || name.includes('idli') || name.includes('poha') || 
-          name.includes('upma') || name.includes('paratha') || name.includes('toast') || 
-          name.includes('omelette') || name.includes('scrambled') || name.includes('sandwich') ||
-          name.includes('uttapam') || name.includes('pongal')) {
+      if (name.includes('dosa') || name.includes('idli') || name.includes('poha') ||
+        name.includes('upma') || name.includes('paratha') || name.includes('toast') ||
+        name.includes('omelette') || name.includes('scrambled') || name.includes('sandwich') ||
+        name.includes('uttapam') || name.includes('pongal')) {
         return true;
       }
       return false;
@@ -168,10 +170,10 @@ export class BudgetPlannerService {
       const name = recipe.name.toLowerCase();
       const dt = recipe.dishType.name.toLowerCase();
       if (dt.includes('main') || dt.includes('rice') || dt.includes('bread') || dt.includes('curry') || dt.includes('gravy')) return true;
-      if (name.includes('biryani') || name.includes('tikka') || name.includes('tandoori') || 
-          name.includes('masala') || name.includes('korma') || name.includes('roti') || 
-          name.includes('nan') || name.includes('dal') || name.includes('tadka') ||
-          name.includes('paneer') || name.includes('chicken') || name.includes('mutton') || name.includes('pulao')) {
+      if (name.includes('biryani') || name.includes('tikka') || name.includes('tandoori') ||
+        name.includes('masala') || name.includes('korma') || name.includes('roti') ||
+        name.includes('nan') || name.includes('dal') || name.includes('tadka') ||
+        name.includes('paneer') || name.includes('chicken') || name.includes('mutton') || name.includes('pulao')) {
         return true;
       }
       return false;
@@ -200,7 +202,7 @@ export class BudgetPlannerService {
       return candidates.length > 0 ? candidates : costedRecipes;
     };
 
-    // ── 5. Initial Plan Generation with Variety Rotation ───────────────────
+    // ── 5. Initial Plan Generation ────────────────────────────────────────────
     const totalSlots = days * mealsPerDay;
     const plan: PlanMeal[] = [];
     const usedIds = new Set<string>();
@@ -214,24 +216,152 @@ export class BudgetPlannerService {
         .slice(0, 3);
     };
 
+    // ── 4a. AI Agent: LLM freely suggests 5 recipes per slot ──────────────
+    let aiFilledSlots = 0;
+    if (process.env.GROQ_API_KEY) {
+      try {
+        const Groq = (await import('groq-sdk')).default;
+        const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+
+        // Calculate per-meal budget tier for smart repetition
+        const perMealBudget = budgetInr / totalSlots;
+        let repetitionInstruction = '';
+        if (perMealBudget < 80) {
+          repetitionInstruction = `BUDGET TIER: TIGHT (₹${Math.round(perMealBudget)}/meal). Repeat affordable base meals (dal, rice, roti, sabzi, dosa) across 2-3 days to save money. Vary only the side dish or preparation style. Keep it practical for a middle-class family.`;
+        } else if (perMealBudget <= 150) {
+          repetitionInstruction = `BUDGET TIER: MODERATE (₹${Math.round(perMealBudget)}/meal). You can repeat 2-3 staple meals across the week but ensure variety in breakfast and at least 3-4 unique dinners.`;
+        } else {
+          repetitionInstruction = `BUDGET TIER: PREMIUM (₹${Math.round(perMealBudget)}/meal). Maximize variety. No repetition needed. Include premium dishes like biryani, paneer specialties, kebabs.`;
+        }
+
+        // Build slot list
+        const slotsNeeded: { day: number; slot: string }[] = [];
+        for (let day = 0; day < days; day++) {
+          for (let meal = 0; meal < mealsPerDay; meal++) {
+            slotsNeeded.push({ day: day + 1, slot: mealSlots[meal % mealSlots.length] });
+          }
+        }
+
+        // Build user context
+        const userAllergyNames = userId ? await prisma.userIngredientPreference.findMany({
+          where: { userId, type: 'ALLERGIC' },
+          include: { ingredient: { select: { canonicalName: true } } }
+        }).then(prefs => prefs.map(p => p.ingredient.canonicalName)) : [];
+
+        const userPreferredNames = userId ? await prisma.userIngredientPreference.findMany({
+          where: { userId, type: 'PREFERRED' },
+          include: { ingredient: { select: { canonicalName: true } } }
+        }).then(prefs => prefs.map(p => p.ingredient.canonicalName)) : [];
+
+        const dietLabel = dietPref === 'VEG' ? 'STRICTLY VEGETARIAN (no meat, no eggs, no fish)'
+          : dietPref === 'EGG' ? 'EGGETARIAN (vegetarian + eggs allowed, no meat/fish)'
+          : 'NON-VEGETARIAN (all ingredients allowed, can include veg dishes too)';
+
+        const systemPrompt = `You are an expert global culinary meal planner and nutritionist optimizing for a ₹${budgetInr} budget over ${days} days.
+
+${repetitionInstruction}
+
+For EACH meal slot, suggest exactly 5 well-known recipe names as options.
+The system will pick the best available one from each set of 5.
+
+STRICT RULES:
+1. Diet: ${dietLabel}. ${dietPref === 'VEG' ? 'ABSOLUTELY NO eggs, chicken, mutton, fish, prawns, or any non-veg ingredient.' : ''}
+2. ${userAllergyNames.length > 0 ? `AVOID recipes with: ${userAllergyNames.join(', ')}` : 'No allergies.'}
+3. ${userPreferredNames.length > 0 ? `PRIORITIZE recipes using: ${userPreferredNames.join(', ')}` : ''}
+4. ${cuisineGroupFilter ? `Focus specifically on ${cuisineGroupFilter} cuisine.` : 'Mix various global and local cuisines for maximum variety.'}
+5. Provide an all-round, highly nutritional, balanced diet (macro and micro nutrients). Do not skew towards just one type of food.
+6. Breakfast: light items. Lunch/Dinner: full, balanced meals.
+7. When repeating meals for budget, use the same recipe name in multiple slots.
+
+Return ONLY valid JSON:
+{"meals":[{"day":1,"slot":"Breakfast","options":["Recipe1","Recipe2","Recipe3","Recipe4","Recipe5"]}]}`;
+
+        const userPrompt = prompt 
+          ? `User request: ${prompt}\n\nStrictly follow the user's specific request above.` 
+          : `User request: (None given). Please provide a completely well-rounded, balanced, and diverse nutritional plan within budget.`;
+
+        const completion = await groq.chat.completions.create({
+          model: 'llama-3.3-70b-versatile',
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: `${userPrompt}\n\nFill these ${slotsNeeded.length} slots:\n${slotsNeeded.map(s => `Day ${s.day} — ${s.slot}`).join('\n')}` }
+          ],
+          temperature: 0.4,
+          max_tokens: 3000,
+          response_format: { type: 'json_object' }
+        });
+
+        const raw = completion.choices[0]?.message?.content || '{}';
+        const parsed = JSON.parse(raw);
+        const aiMeals: { day: number; slot: string; options: string[] }[] = parsed.meals || [];
+
+        console.log(`[BudgetPlanner] AI returned ${aiMeals.length} slot suggestions (budget tier: ₹${Math.round(budgetInr / totalSlots)}/meal)`);
+
+        for (const aiMeal of aiMeals) {
+          const dayIndex = aiMeal.day - 1;
+          if (dayIndex < 0 || dayIndex >= days) continue;
+
+          // Fuzzy-match all 5 options against our pool
+          const options = (aiMeal.options || []).slice(0, 5);
+          const matchResults = fuzzyMatchRecipeNames(options, pool);
+
+          // Pick the first match that passes verification
+          let placed = false;
+          for (const mr of matchResults) {
+            if (!mr.matchedRecipe) continue;
+
+            const costedMatch = costedRecipes.find(c => c.recipe.id === mr.matchedRecipe!.id);
+            if (!costedMatch) continue;
+
+            // Agentic verification: diet + allergy check
+            const candidate = {
+              recipe: costedMatch.recipe,
+              estimatedCost: costedMatch.estimatedCost,
+              dayIndex,
+              mealSlot: aiMeal.slot
+            };
+            const { verified } = verifyAssignments([candidate], dietPref, allergicIngredientIds);
+
+            if (verified.length > 0) {
+              plan.push(verified[0]);
+              usedIds.add(costedMatch.recipe.id);
+              aiFilledSlots++;
+              console.log(`[BudgetPlanner] AI → Day ${aiMeal.day} ${aiMeal.slot}: "${mr.candidateName}" → "${costedMatch.recipe.name}" (${mr.tier}) ✅`);
+              placed = true;
+              break;
+            } else {
+              console.log(`[BudgetPlanner] AI → Day ${aiMeal.day} ${aiMeal.slot}: "${mr.candidateName}" → "${costedMatch.recipe.name}" REJECTED by verification`);
+            }
+          }
+          if (!placed) {
+            console.log(`[BudgetPlanner] AI → Day ${aiMeal.day} ${aiMeal.slot}: no valid match from ${options.length} options, will use deterministic`);
+          }
+        }
+
+        console.log(`[BudgetPlanner] AI filled ${aiFilledSlots}/${totalSlots} slots`);
+      } catch (err: any) {
+        console.error('[BudgetPlanner] AI agent failed, falling back to deterministic:', err?.message || err);
+      }
+    }
+
+    // ── 5b. Deterministic fallback: fill any remaining unfilled slots ──────
+    const filledSlotKeys = new Set(plan.map(p => `${p.dayIndex}-${p.mealSlot}`));
+
     for (let day = 0; day < days; day++) {
       for (let meal = 0; meal < mealsPerDay; meal++) {
         const mealSlotName = mealSlots[meal % mealSlots.length];
-        const slotPool = getSlotCandidates(mealSlotName);
+        if (filledSlotKeys.has(`${day}-${mealSlotName}`)) continue; // AI already filled
 
-        // Score candidates with rotation penalties
+        const slotPool = getSlotCandidates(mealSlotName);
         const candidates = slotPool
           .filter(c => !usedIds.has(c.recipe.id))
           .map(c => {
             let penalty = 0;
             const cuisineGroup = c.recipe.cuisineRegion?.regionGroup?.name;
-            if (cuisineGroup && recentCuisines.includes(cuisineGroup)) {
-              penalty += 15;
-            }
+            if (cuisineGroup && recentCuisines.includes(cuisineGroup)) penalty += 15;
             const mainIngs = getRecipeMainIngredients(c.recipe);
             const dupCount = mainIngs.filter(ing => recentIngredients.has(ing)).length;
             penalty += dupCount * 20;
-
             return { ...c, adjustedScore: c.prefScore - penalty };
           })
           .sort((a, b) => b.adjustedScore - a.adjustedScore);
@@ -388,9 +518,18 @@ export class BudgetPlannerService {
       budgetInr,
       saved: finalSavings > 0 ? Math.round(finalSavings * 100) / 100 : 0,
       cached: false,
+      aiSummary: '',
     };
 
-    // ── 6. Persist to DB if authenticated ─────────────────────────────────
+    // ── 6. Generate AI summary with nutrition tips ──────────────────────────
+    try {
+      result.aiSummary = await this.generatePlanSummary(result.plan, budgetInr, dietPref, days);
+    } catch (err: any) {
+      console.error('[BudgetPlanner] AI summary generation failed:', err?.message || err);
+      result.aiSummary = '';
+    }
+
+    // ── 7. Persist to DB if authenticated ─────────────────────────────────
     if (userId && saveToDb) {
       const saved = await prisma.budgetPlan.create({
         data: { userId, budgetInr, dietPref, days, mealsPerDay, generatedPlan: JSON.stringify(result) }
@@ -399,6 +538,41 @@ export class BudgetPlannerService {
     }
 
     return result;
+  }
+
+  private async generatePlanSummary(
+    plan: any[],
+    budget: number,
+    diet: string,
+    days: number
+  ): Promise<string> {
+    if (!process.env.GROQ_API_KEY) return '';
+
+    const Groq = (await import('groq-sdk')).default;
+    const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+
+    const mealSummary = plan.map(p =>
+      `Day ${p.dayIndex + 1} ${p.mealSlot}: ${p.recipe.name} (₹${p.estimatedCost}, ${p.recipe.ingredientCount} ingredients)`
+    ).join('\n');
+
+    const completion = await groq.chat.completions.create({
+      model: 'llama-3.3-70b-versatile',
+      messages: [
+        {
+          role: 'system',
+          content: `You are a nutritionist analyzing a ${diet} Indian meal plan for a ₹${budget} weekly budget across ${days} days. Give a concise 3-4 line analysis covering:
+1. Nutritional balance assessment (protein, carbs, vitamins)
+2. Any dietary gaps or repetitive ingredients you notice
+3. One specific money-saving tip based on the actual meals listed
+Be specific to these meals, not generic advice. Use a friendly tone with relevant emojis.`
+        },
+        { role: 'user', content: mealSummary }
+      ],
+      temperature: 0.5,
+      max_tokens: 250,
+    });
+
+    return completion.choices[0]?.message?.content || '';
   }
 
   async getUserPlans(userId: string, limit = 10) {
