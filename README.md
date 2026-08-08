@@ -1,3 +1,5 @@
+file:///C:/Users/Admin/Downloads/prisma-erd.svg           E-R DIAGRAM OF MY DB 
+
 # Recipe-to-Cart v2 — Upgraded
 
 ## What's New in This Version
