@@ -87,7 +87,7 @@ Always end your response with this exact block — even if the list is empty:
   messages.push({ role: 'user', content: userMessage });
 
   const completion = await groq.chat.completions.create({
-    model: 'llama-3.3-70b-versatile',
+   model:'llama-3.1-8b-instant',
     messages,
     temperature: 0.7,
     max_tokens: 900,
