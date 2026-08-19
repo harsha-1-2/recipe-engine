@@ -281,7 +281,7 @@ Return ONLY valid JSON:
           : `User request: (None given). Please provide a completely well-rounded, balanced, and diverse nutritional plan within budget.`;
 
         const completion = await groq.chat.completions.create({
-          model: 'llama-3.3-70b-versatile',
+          model:'openai/gpt-oss-120b',
           messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: `${userPrompt}\n\nFill these ${slotsNeeded.length} slots:\n${slotsNeeded.map(s => `Day ${s.day} — ${s.slot}`).join('\n')}` }
