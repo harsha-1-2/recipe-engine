@@ -241,6 +241,9 @@ STRICT RULES:
 5. Provide an all-round, highly nutritional, balanced diet (macro and micro nutrients). Do not skew towards just one type of food.
 6. Breakfast should be light items. Lunch/Dinner should be full, balanced meals.
 7. Ensure massive variety across the days (no repetitive main ingredients unless requested).
+8.if the person is non veg and he ask for a mixed diet u can include some veg items also but atmost 30% of slots only 
+9.give a alround diet 
+10.make sure u fill the slots in such a that a item which is consumed in breakfast is given in that slot and all until excliplity asked for breakfast in lunch or dinner same way for all the slot 
 
 Return ONLY valid JSON:
 {"meals":[{"day":"Monday","slot":"Breakfast","options":["Recipe1","Recipe2","Recipe3","Recipe4","Recipe5"]}]}`;
@@ -255,8 +258,8 @@ Return ONLY valid JSON:
             { role: 'system', content: systemPrompt },
             { role: 'user', content: `${userPrompt}\n\nFill these ${slotsNeeded.length} slots:\n${slotsNeeded.map(s => `Day ${s.day} — ${s.slot}`).join('\n')}` }
           ],
-          temperature: 0.4,
-          max_tokens: 3000,
+          temperature: 0.5,
+          max_tokens: 8000,
           response_format: { type: 'json_object' }
         });
 
