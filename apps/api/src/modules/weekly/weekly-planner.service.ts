@@ -259,7 +259,7 @@ Return ONLY valid JSON:
             { role: 'user', content: `${userPrompt}\n\nFill these ${slotsNeeded.length} slots:\n${slotsNeeded.map(s => `Day ${s.day} — ${s.slot}`).join('\n')}` }
           ],
           temperature: 0.5,
-          max_tokens: 8000,
+          max_tokens: 10000,
           response_format: { type: 'json_object' }
         });
 
