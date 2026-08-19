@@ -18,7 +18,7 @@ Examples:
 - "a pack of bread and 3 onions" → {"items":[{"name":"bread","quantity":1,"unit":"pack"},{"name":"onion","quantity":3,"unit":"pcs"}]}`;
 
   const completion = await groq.chat.completions.create({
-    model: 'llama-3.3-70b-versatile',
+    model:'openai/gpt-oss-120b',
     messages: [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: text }
